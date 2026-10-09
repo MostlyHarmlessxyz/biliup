@@ -8,12 +8,12 @@ use crate::server::infrastructure::connection_pool::ConnectionPool;
 use crate::server::infrastructure::models::StreamerInfo;
 use crate::server::infrastructure::models::live_streamer::LiveStreamer;
 use crate::server::infrastructure::models::upload_streamer::UploadStreamer;
+use crate::server::services::douyu_keeper::{DouyuCookieKeeper, apply_douyu_override};
 use biliup::client::StatelessClient;
 use biliup::downloader::live::LiveStream;
 use core::fmt;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
-use struct_patch::Patch;
 use tracing::{error, info};
 
 /// 应用程序上下文，包含工作器和扩展信息
@@ -129,6 +129,9 @@ impl Context {
             // output_dir: PathBuf::from("./downloads")
             output_dir: PathBuf::from("."),
             suffix,
+            bytes_written: Default::default(),
+            preview: Default::default(),
+            index_tap: None,
         }
     }
 }
@@ -146,6 +149,7 @@ pub struct Worker {
     pub upload_streamer: Option<UploadStreamer>,
     /// 全局配置
     config: Arc<RwLock<Config>>,
+    douyu_keeper: Option<Arc<DouyuCookieKeeper>>,
     /// HTTP客户端
     pub client: StatelessClient,
     /// 最近一次开播探测被录制策略挡下的原因，仅用于向界面解释「为什么没在录」。
@@ -175,6 +179,7 @@ impl Worker {
             live_streamer,
             upload_streamer,
             config,
+            douyu_keeper: None,
             client,
             last_rejection: RwLock::new(None),
         }
@@ -182,6 +187,11 @@ impl Worker {
 
     pub fn id(&self) -> i64 {
         self.live_streamer.id
+    }
+
+    pub fn with_douyu_keeper(mut self, keeper: Arc<DouyuCookieKeeper>) -> Self {
+        self.douyu_keeper = Some(keeper);
+        self
     }
 
     /// 记录本轮开播探测的策略判定结果（`None` 表示未被挡下）。
@@ -212,7 +222,10 @@ impl Worker {
         let mut cfg = self.config.read().unwrap().clone();
 
         if let Some(cfg_p) = self.live_streamer.override_cfg.clone() {
-            cfg.apply(cfg_p)
+            apply_douyu_override(&mut cfg, &cfg_p);
+        }
+        if let Some(keeper) = &self.douyu_keeper {
+            keeper.resolve(&mut cfg);
         }
         cfg
     }
@@ -302,5 +315,64 @@ impl fmt::Debug for WorkerStatus {
             WorkerStatus::Pause => "Pause",
         };
         f.write_str(name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server::config::ConfigPatch;
+    use crate::server::core::downloader::DownloaderType;
+    use crate::server::core::downloader::sync_downloader::align_file_size;
+
+    fn streamer_with_override(override_cfg: Option<ConfigPatch>) -> LiveStreamer {
+        LiveStreamer {
+            id: 1,
+            url: "https://live.bilibili.com/1".into(),
+            remark: "test".into(),
+            filename_prefix: None,
+            time_range: None,
+            upload_streamers_id: None,
+            format: None,
+            override_cfg,
+            preprocessor: None,
+            segment_processor: None,
+            downloaded_processor: None,
+            postprocessor: None,
+            opt_args: None,
+            excluded_keywords: None,
+        }
+    }
+
+    /// 复现：全局 file_size=100MB，主播覆写只选了 sync-downloader，
+    /// 覆写经落库回传后 worker 取到的配置必须仍是 100MB，边录边传按 100MiB 切段。
+    #[test]
+    fn worker_config_keeps_global_file_size_when_override_never_set_it() {
+        let global_size = 104_857_600u64;
+        let config = Arc::new(RwLock::new(Config {
+            file_size: Some(global_size),
+            ..Config::default()
+        }));
+        // 与 WebUI 保存后的路径一致：反序列化 -> 落库序列化 -> 再反序列化
+        let submitted: ConfigPatch =
+            serde_json::from_str(r#"{"downloader":"sync-downloader"}"#).unwrap();
+        let stored = serde_json::to_string(&submitted).unwrap();
+        let loaded: ConfigPatch = serde_json::from_str(&stored).unwrap();
+
+        let worker = Worker::new(
+            streamer_with_override(Some(loaded)),
+            None,
+            config,
+            StatelessClient::default(),
+        );
+        let effective = worker.get_config();
+
+        assert_eq!(effective.downloader, Some(DownloaderType::SyncDownloader));
+        assert_eq!(effective.file_size, Some(global_size));
+        assert_eq!(
+            align_file_size(effective.file_size),
+            100 * 1024 * 1024,
+            "边录边传应按全局 100MB（10MiB 对齐后 100MiB）切段，而不是 2GiB 默认值"
+        );
     }
 }

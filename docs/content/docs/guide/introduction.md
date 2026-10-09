@@ -23,11 +23,9 @@ top = false
 
 ## INSTALLATION
 0. 安装 __Python 3.7+__ 和 __pip__
- > 如需录制 斗鱼(Douyu) 平台，请额外安装至少一个 __JavaScript 解释器__。
- > 支持且不限于以下的  __JavaScript 解释器__，点击名字可跳转至下载页。
- > Please install at least one of the following Javascript interpreter.
- > python packages: [QuickJS](https://pypi.org/project/quickjs/)
- > applications: [Node.js](https://nodejs.org/zh-cn/download)
+ > 当前 Rust 版斗鱼插件内置网页播放签名，无需额外安装 JavaScript 解释器。
+ > 部分房间的原画需配置网页版 Cookie；HEVC 录制请使用 mesio 或兼容的新版 FFmpeg。
+ > 详见 [斗鱼 Cookie 与画质设置](@/docs/tutorials/douyu-cookie-guide.md)。
 1. 创建配置文件 **[config.toml](https://github.com/biliup/biliup/tree/master/public/config.toml)**
     ```toml
     # 以下为必填项
@@ -44,18 +42,19 @@ top = false
 `pip3 install biliup`
 3. 开始使用 __biliup__：
 ```shell
-# 启动 Web 服务（默认监听 127.0.0.1:19159）
-$ biliup server --auth
-# 后台运行可使用内置 --background（停止时结束该进程）
-$ biliup server --auth --background
-# 也可以使用 nohup 或 systemd
-$ nohup biliup server --auth > biliup.log 2>&1 &
+# 默认监听 0.0.0.0:19159。可使用-H及-P选项配置。
+# 考虑到安全性，建议指定本地地址配合web server或者添加验证。
+$ biliup start
+# 退出
+$ biliup stop
+# 重启
+$ biliup restart
 # 查看版本
 $ biliup --version
 # 显示帮助以查看更多选项
 $ biliup -h
 # 指定配置文件路径
-$ biliup server --auth --config ./config.yaml
+$ biliup --config ./config.yaml start
 ```
 从 v0.2.15 版本开始，配置文件支持 toml 格式，详见 [config.toml](https://github.com/biliup/biliup/tree/master/public/config.toml) ，
 yaml配置文件完整内容可参照 [config.yaml](https://github.com/biliup/biliup/tree/master/public/config.yaml) 。
@@ -63,58 +62,9 @@ __FFmpeg__ 作为可选依赖。如果还有问题可以 [加群讨论](https://
 
 > 使用上传功能需要登录B站，通过 [命令行投稿工具](https://github.com/biliup/biliup-rs) 获取 cookies.json，并放入启动 biliup 的路径即可
 
-Web UI 也可以在“用户管理”中直接登记已有的 `cookies.json`，或使用扫码登录；登记后的账号可用于新版投稿分区和录播上传。启用 Web 认证后，也可在此处修改管理员密码，修改完成需要重新登录。
-
-## 当前 master 的新版分区与斗鱼 H.265
-
-### B站新版投稿分区
-
-旧版 `tid` 仍然必填；可以额外配置新版分区 ID `tid_v2`。投稿请求会把它发送为 B 站接口字段 `human_type2`，不填写时不会发送该字段。
-
-Web UI 的模板编辑页会自动加载新版分区列表；如果该接口暂时不可用，旧版分区列表仍可正常使用。
-
-```yaml
-streamers:
-    示例直播录像:
-        url:
-            - https://live.bilibili.com/1
-        tid: 171
-        tid_v2: 1003
-```
-
-命令行投稿可以使用 `--tid-v2`：
-
-```bash
-biliup upload --tid 171 --tid-v2 1003 ./video.mp4
-```
-
-Python/stream-gears 上传入口支持同名关键字参数 `tid_v2`，例如 `stream_gears.upload(..., tid_v2=1003)`。
-
-如果上传文件已经被 B 站接收、但账号在最终投稿前失效，命令行上传会保留断点文件。账号恢复后使用完全相同的视频路径和投稿参数重新执行命令，即可复用已上传文件的元数据，避免重复上传；投稿成功后断点文件会自动删除。
-
-边录边传任务在最终投稿失败时会把稿件元数据保存到 `data/pending_uploads/`（不包含 Cookie）。更新 Cookie 后可使用 `retry-upload` 重试，例如：
-
-```bash
-biliup --user-cookie ./cookies.json retry-upload data/pending_uploads/1.json
-```
-
-只有投稿成功后清单才会删除；失败时可保留清单稍后再次重试。
-
-录播配置中的 `format: mp4` 会自动选择 FFmpeg 进行有效 remux，不需要手动把 FLV 文件改名；未指定格式时仍使用下载器的源容器。
-
-### 斗鱼 H.265
-
-斗鱼默认使用 H.264。需要尝试 H.265 时，在全局配置中设置：
-
-```toml
-douyu_codec = "h265"
-```
-
-可选值只有 `h264` 和 `h265`。如果直播间没有 H.265 流，程序会记录警告并自动回退到 H.264；H.265 直链不会套用 `douyu_force_hs` 的 hs 构造 URL。原生 FLV 下载器和 FFmpeg 下载器都可以录制并分段 HEVC 流。
-
 > ARM平台用户，需要使用到stream-gears（默认下载器与上传器）进行下载和上传的，请参考此教程降级stream-gears版本。 https://github.com/biliup/biliup/discussions/407
 
-> Linux 下可使用上面的 `--background`、`nohup` 或 systemd 以后台服务运行；录像和日志文件保存在执行目录下，启动后可用 `ps -A | grep biliup` 检查进程。
+> Linux下以daemon进程启动，录像和日志文件保存在执行目录下，程序执行过程可查看日志文件。启动之后使用命令`ps -A | grep biliup` 查看进程biliup是否启动成功。
 
 
 ## Docker使用 🔨
@@ -125,19 +75,19 @@ douyu_codec = "h265"
 # 在下载目录创建配置文件
 vim /host/path/config.toml
 # 启动biliup的docker容器
-docker run -P --name biliup -v /host/path:/opt -d ghcr.io/biliup/caution:master server --bind 0.0.0.0 --auth --config /opt/config.toml
+docker run -P --name biliup -v /host/path:/opt -d ghcr.io/biliup/caution:master
 ```
 * 从自定义的配置文件启动
 ```bash
 # 在下载目录创建配置文件
 vim /host/path/config.toml
-# 启动biliup的docker容器，并启用用户验证；首次访问 Web UI 时设置密码
-docker run -P --name biliup -v /host/path:/opt -p 19159:19159 -d --restart always ghcr.io/biliup/caution:latest server --bind 0.0.0.0 --auth --config /opt/config.toml
+# 启动biliup的docker容器，并启用用户验证。请注意替换 yourpassword 为你的密码。
+docker run -P --name biliup -v /host/path:/opt -p 19159:19159 -d --restart always ghcr.io/biliup/caution:latest --password yourpassword
 ```
  > Web-UI 默认用户名为 biliup。
 * 从默认配置文件启动
 ```bash
-docker run -P --name biliup -v /host/path:/opt -p 19159:19159 -d --restart always ghcr.io/biliup/caution:latest server --bind 0.0.0.0 --auth
+docker run -P --name biliup -v /host/path:/opt -p 19159:19159 -d --restart always ghcr.io/biliup/caution:latest --password yourpassword
 ```
 ### 方式二 手动构建镜像
 ```bash
@@ -161,20 +111,20 @@ sudo docker exec -it imageId /bin/bash
 
 ## 从源码运行biliup
 * 下载源码: `git clone https://github.com/ForgQi/bilibiliupload.git`
-* 安装: `pip3 install -e .`
+* 安装: `pip3 install -e ./crates/stream-gears`
 * 启动: `python3 -m biliup`
 * 构建:
   ```shell
   $ npm install
   $ npm run build
-  $ python3 -m build
+  $ python3 -m build crates/stream-gears
   ```
 * 调试 webUI: `python3 -m biliup --static-dir public`
 
 
 ## yaml配置文件示例
 可选项见[完整配置文件](https://github.com/biliup/biliup/tree/master/public/config.yaml),
-tid投稿分区见[Wiki](https://github.com/biliup/biliup/wiki)
+tid投稿分区见[Wiki](https://github.com/biliup/biliup/wiki)；可选 `tid_v2` 指定新版分区 ID（与旧版 `tid` 可同时设置）
 ```yaml
 streamers:
     xxx直播录像:
@@ -196,6 +146,7 @@ video.desc = '视频简介'
 video.source = '添加转载地址说明'
 # 设置视频分区,默认为122 野生技能协会
 video.tid = 171
+# video.tid_v2 = 2102  # 可选：新版分区 ID
 video.set_tag(['星际争霸2', '电子竞技'])
 video.dynamic = '动态内容'
 lines = 'AUTO'
@@ -262,6 +213,20 @@ bupfetch模式支持的上传方式及线路有：
 - 使用 [DanmakuFactory](https://github.com/hihkm/DanmakuFactory) 将XML弹幕文件转化为ASS字幕文件，然后使用一般播放器外挂加载字幕
 - [AList](https://alist.nn.ci/zh/) 检测到同文件夹下的XML文件会自动挂载弹幕，实现带弹幕的录播效果
 - 使用 [弹弹play](https://www.dandanplay.com/) 可直接挂载XML弹幕文件观看
+
+### 5. 录制中断时的未完成录像
+biliup **不会删除未完成的录像**。断流、CDN 切换、下载器出错、暂停或删除房间、退出程序时，已经写下的内容都会保留：
+- FLV / TS（stream-gears、mesio、ffmpeg 录 FLV / TS 时）：截断后前面的内容仍可播放，照常作为一个分段保存，并照常进入上传和后处理（stream-gears 遇到读到一半断开的最后一个 tag 时只丢弃这一个 tag）。
+- ffmpeg 录 MP4（`format: mp4`）：MP4 的索引（moov）在录制结束时才写，被中止的 MP4 无法播放，因此**不进入上传流程**；但文件不会被删除，会以 `.mp4.part` 的名字留在录像目录里，可以用 untrunc 等工具尝试修复，或自行删除。
+
+### 6. 录制分段、画面遮挡和本地合并
+
+录制分段时长可以使用预设或自定义值；启用画面遮挡时，可以在当前直播截帧上圈选区域，分段关闭后自动处理。程序默认不会将多个本地分段拼成单个文件；处理完成后可使用 FFmpeg `-c copy` 快速合并，也可自行配置后处理脚本。
+
+入口、截图说明、碎片过滤与无重编码合并步骤见[录制分段、画面遮挡与本地合并](@/docs/tutorials/recording-and-masking.md)。斗鱼账号和自动续期见[斗鱼登录、Cookie 续期与画质设置](@/docs/tutorials/douyu-cookie-guide.md)。
+
+### 7. 斗鱼录制中的 `Non-monotonous DTS` 日志
+斗鱼 CDN 切换节点或主播推流重连时，FLV 流里的时间戳常会归 0（日志形如 `Non-monotonous DTS ... previous: 4877, current: 0`），切换瞬间还可能夹着空的 tag、重发的 onMetaData / 序列头，甚至重发整个 FLV 文件头。stream-gears 会按音频、视频轨道分别把后续时间戳平移接上，跳过残缺的 tag，录制继续进行；连接在 tag 中间断开时按正常断流结束，已录内容全部保留。这条日志只是提示，不需要处理。
 
 
 ## 自定义插件

@@ -13,7 +13,7 @@ use std::str::FromStr;
 use std::time::Duration;
 use tracing::{info, warn};
 
-#[derive(Serialize, Deserialize, Debug, Clone, Builder)]
+#[derive(Serialize, Deserialize, Debug, Builder)]
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 pub struct Studio {
     /// 是否转载, 1-自制 2-转载
@@ -32,14 +32,9 @@ pub struct Studio {
     #[builder(default = 171)]
     pub tid: u16,
 
-    /// 新版投稿分区。B 站投稿接口字段名为 `human_type2`。
+    /// 新版投稿分区 tid_v2（可选；不设置时不提交该字段）
     #[cfg_attr(feature = "cli", clap(long))]
-    #[serde(
-        default,
-        rename = "human_type2",
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "deserialize_human_type2"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tid_v2: Option<u32>,
 
     /// 视频封面
@@ -159,35 +154,6 @@ pub struct Studio {
 #[cfg(feature = "cli")]
 fn parse_extra_fields(s: &str) -> std::result::Result<HashMap<String, Value>, String> {
     serde_json::from_str(s).map_err(|e| e.to_string())
-}
-
-fn deserialize_human_type2<'de, D>(deserializer: D) -> std::result::Result<Option<u32>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let value = Option::<Value>::deserialize(deserializer)?;
-    let value = match value {
-        None | Some(Value::Null) => return Ok(None),
-        Some(Value::Number(number)) => number.as_u64().ok_or_else(|| {
-            serde::de::Error::custom("human_type2 must be a non-negative integer")
-        })?,
-        Some(Value::Object(object)) => {
-            object.get("id").and_then(Value::as_u64).ok_or_else(|| {
-                serde::de::Error::custom(
-                    "human_type2 object must contain a non-negative integer id",
-                )
-            })?
-        }
-        Some(other) => {
-            return Err(serde::de::Error::custom(format!(
-                "human_type2 must be an integer or an object containing id, got {other}"
-            )));
-        }
-    };
-
-    u32::try_from(value)
-        .map(Some)
-        .map_err(|_| serde::de::Error::custom("human_type2 exceeds u32 range"))
 }
 
 fn default_copyright() -> u8 {
@@ -350,7 +316,7 @@ impl Archive {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 pub struct Subtitle {
     open: i8,
     lan: String,
@@ -408,9 +374,10 @@ impl FromStr for Vid {
         if s.len() < 3 {
             return s.parse::<u64>().map(Vid::Aid);
         }
-        match &s[..2] {
-            "BV" => Ok(Vid::Bvid(s.to_string())),
-            "av" => Ok(Vid::Aid(s[2..].parse()?)),
+        // `get` 而不是 `&s[..2]`：第 2 字节落在多字节字符中间时切片会 panic
+        match s.get(..2) {
+            Some("BV") => Ok(Vid::Bvid(s.to_string())),
+            Some("av") => Ok(Vid::Aid(s[2..].parse()?)),
             _ => Ok(Vid::Aid(s.parse()?)),
         }
     }
@@ -588,9 +555,7 @@ impl BiliBili {
         let params = [("t", ts.to_string()), ("csrf", csrf.to_string())];
         let url = reqwest::Url::parse_with_params(url_str, &params).unwrap();
 
-        let cookie = self.get_cookie()?;
-        let jar = reqwest::cookie::Jar::default();
-        jar.add_cookie_str(&cookie, &url);
+        let jar = self.web_cookie_jar(&url)?;
 
         let ret: ResponseData = reqwest::Client::proxy_builder(proxy)
             .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36")
@@ -855,18 +820,6 @@ impl BiliBili {
             .await?)
     }
 
-    /// 获取新版投稿分区列表。
-    pub async fn human_type2_list(&self) -> Result<Value> {
-        Ok(self
-            .client
-            .get("https://member.bilibili.com/x/vupre/web/archive/human/type2/list")
-            .query(&[("t", chrono::Utc::now().timestamp_millis().to_string())])
-            .send()
-            .await?
-            .json()
-            .await?)
-    }
-
     pub async fn recommend_tag(&self, subtype_id: u16, title: &str, key: &str) -> Result<Value> {
         let result: ResponseData = self
             .client
@@ -881,7 +834,7 @@ impl BiliBili {
         Err(Kind::Custom(result.message))
     }
 
-    fn get_csrf(&self) -> Result<&str> {
+    pub(crate) fn get_csrf(&self) -> Result<&str> {
         let csrf = self
             .login_info
             .cookie_info
@@ -928,20 +881,13 @@ impl BiliBili {
 
     /// 稿件管理
     async fn archives(&self, status: &str, page_num: u32) -> Result<Value> {
-        let url_str = "https://member.bilibili.com/x/web/archives";
-        let params = [("status", status), ("pn", &page_num.to_string())];
-        let url = reqwest::Url::parse_with_params(url_str, &params).unwrap();
-
-        let cookie = self.get_cookie()?;
-        let jar = reqwest::cookie::Jar::default();
-        jar.add_cookie_str(&cookie, &url);
-
-        let res: ResponseData = reqwest::Client::builder()
-            .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/63.0.3239.108")
-            .cookie_provider(std::sync::Arc::new(jar))
+        // 复用登录时构建的客户端：cookie store 已含全部登录 Cookie，
+        // 且保留代理等配置，避免分页循环中每页新建 Client 和 cookie jar。
+        let res: ResponseData = self
+            .client
+            .get("https://member.bilibili.com/x/web/archives")
+            .query(&[("status", status), ("pn", &page_num.to_string())])
             .timeout(Duration::new(60, 0))
-            .build()?
-            .get(url)
             .send()
             .await?
             .json()
@@ -1018,22 +964,23 @@ impl BiliBili {
             .archives)
     }
 
-    fn get_cookie(&self) -> Result<String> {
-        let cookie = self
+    /// Web 投稿请求用的 cookie jar。`Jar::add_cookie_str` 按单条 `Set-Cookie` 解析，
+    /// 把 `a=1; b=2` 整串传进去只会存下第一个 cookie（其余被当成属性丢掉），
+    /// 所以逐个加入。
+    fn web_cookie_jar(&self, url: &reqwest::Url) -> Result<reqwest::cookie::Jar> {
+        let jar = reqwest::cookie::Jar::default();
+        let cookies = self
             .login_info
             .cookie_info
             .get("cookies")
             .and_then(|c: &Value| c.as_array())
-            .ok_or("get cookie error")?
-            .iter()
-            .filter_map(|c| match (c["name"].as_str(), c["value"].as_str()) {
-                (Some(name), Some(value)) => Some((name, value)),
-                _ => None,
-            })
-            .map(|c| format!("{}={}", c.0, c.1))
-            .collect::<Vec<_>>()
-            .join("; ");
-        Ok(cookie)
+            .ok_or("get cookie error")?;
+        for cookie in cookies {
+            if let (Some(name), Some(value)) = (cookie["name"].as_str(), cookie["value"].as_str()) {
+                jar.add_cookie_str(&format!("{name}={value}"), url);
+            }
+        }
+        Ok(jar)
     }
 }
 
@@ -1058,8 +1005,7 @@ impl<T: Serialize> Display for ResponseData<T> {
 #[cfg(test)]
 mod archive_tests {
     use super::{
-        RawArchivePageMetadata, Studio, pagination_plan, parse_archive_page,
-        validate_archive_page_metadata,
+        RawArchivePageMetadata, pagination_plan, parse_archive_page, validate_archive_page_metadata,
     };
     use serde_json::json;
 
@@ -1079,55 +1025,6 @@ mod archive_tests {
             "ptime": 1,
             "ctime": 1
         })
-    }
-
-    #[test]
-    fn studio_serializes_tid_v2_as_human_type2() {
-        let studio: Studio = serde_json::from_value(json!({
-            "tid": 171,
-            "title": "fixture",
-            "human_type2": 1003
-        }))
-        .unwrap();
-
-        assert_eq!(studio.tid_v2, Some(1003));
-        let serialized = serde_json::to_value(studio).unwrap();
-        assert_eq!(serialized["human_type2"], 1003);
-        assert!(serialized.get("tid_v2").is_none());
-    }
-
-    #[test]
-    fn studio_omits_human_type2_when_not_configured() {
-        let studio: Studio =
-            serde_json::from_value(json!({"tid": 171, "title": "fixture"})).unwrap();
-        let serialized = serde_json::to_value(studio).unwrap();
-        assert!(serialized.get("human_type2").is_none());
-    }
-
-    #[test]
-    fn studio_reads_human_type2_object_from_archive_details() {
-        let studio: Studio = serde_json::from_value(json!({
-            "tid": 171,
-            "title": "fixture",
-            "human_type2": {"id": 2004, "name": "新版分区"}
-        }))
-        .unwrap();
-
-        assert_eq!(studio.tid_v2, Some(2004));
-        assert_eq!(serde_json::to_value(studio).unwrap()["human_type2"], 2004);
-    }
-
-    #[test]
-    fn studio_rejects_malformed_human_type2_values() {
-        for value in [json!(-1), json!(1.5), json!({"name": "missing id"})] {
-            assert!(
-                serde_json::from_value::<Studio>(json!({
-                    "tid": 171,
-                    "human_type2": value,
-                }))
-                .is_err()
-            );
-        }
     }
 
     #[test]
@@ -1217,6 +1114,149 @@ mod archive_tests {
                 &RawArchivePageMetadata { ps: 10, count: 22 }
             )
             .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod vid_and_cookie_tests {
+    use super::{BiliBili, Vid};
+    use reqwest::cookie::CookieStore;
+    use serde_json::json;
+    use std::str::FromStr;
+
+    /// `Vid` 是 CLI 参数解析器；非 ASCII 输入必须报错，而不是在字节下标切片处 panic。
+    #[test]
+    fn vid_rejects_non_ascii_input_without_panicking() {
+        for input in ["中文", "a中", "B中V1", "BV", "av", ""] {
+            assert!(Vid::from_str(input).is_err(), "{input:?}");
+        }
+        assert_eq!(Vid::from_str(" av170001 "), Ok(Vid::Aid(170001)));
+        assert_eq!(
+            Vid::from_str("BV1ip4y1x7Gi"),
+            Ok(Vid::Bvid("BV1ip4y1x7Gi".into()))
+        );
+    }
+
+    /// Web 投稿用的 cookie jar 要带上登录信息里的全部 cookie，而不只是第一个。
+    #[test]
+    fn web_submit_cookie_jar_carries_every_login_cookie() {
+        let bili = BiliBili {
+            client: reqwest::Client::new(),
+            login_info: serde_json::from_value(json!({
+                "cookie_info": {"cookies": [
+                    {"name": "SESSDATA", "value": "sess%2C1*11"},
+                    {"name": "bili_jct", "value": "jct"},
+                    {"name": "DedeUserID", "value": "42"},
+                    {"name": "broken"}
+                ]},
+                "sso": [],
+                "token_info": {
+                    "access_token": "",
+                    "expires_in": 0,
+                    "mid": 42,
+                    "refresh_token": ""
+                },
+                "platform": null
+            }))
+            .unwrap(),
+        };
+        let url = reqwest::Url::parse("https://member.bilibili.com/x/vu/web/add/v3?t=1&csrf=jct")
+            .unwrap();
+
+        let jar = bili.web_cookie_jar(&url).unwrap();
+        let header = jar.cookies(&url).expect("jar holds no cookie for the URL");
+        let header = header.to_str().unwrap();
+        for expected in ["SESSDATA=sess%2C1*11", "bili_jct=jct", "DedeUserID=42"] {
+            assert!(header.contains(expected), "{expected} missing in {header}");
+        }
+        assert!(!header.contains("broken"), "{header}");
+    }
+}
+
+#[cfg(test)]
+mod studio_tid_v2_tests {
+    use super::Studio;
+
+    fn base_studio_json() -> serde_json::Value {
+        serde_json::json!({
+            "copyright": 1,
+            "source": "",
+            "tid": 95,
+            "cover": "",
+            "title": "t",
+            "desc": "",
+            "dynamic": "",
+            "tag": "",
+            "dolby": 0,
+            "lossless_music": 0,
+            "no_reprint": 0,
+            "charging_pay": 0,
+            "up_selection_reply": false,
+            "up_close_reply": false,
+            "up_close_danmu": false
+        })
+    }
+
+    #[test]
+    fn studio_json_omits_tid_v2_when_unset() {
+        let studio: Studio = serde_json::from_value(base_studio_json()).unwrap();
+        assert!(studio.tid_v2.is_none());
+        let value = serde_json::to_value(&studio).unwrap();
+        assert_eq!(value["tid"], 95);
+        assert!(
+            value.get("tid_v2").is_none(),
+            "unset tid_v2 must not appear in JSON: {value}"
+        );
+    }
+
+    #[test]
+    fn studio_json_includes_tid_v2_when_set() {
+        let mut raw = base_studio_json();
+        raw["tid_v2"] = serde_json::json!(2102);
+        let studio: Studio = serde_json::from_value(raw).unwrap();
+        assert_eq!(studio.tid_v2, Some(2102));
+        let value = serde_json::to_value(&studio).unwrap();
+        assert_eq!(value["tid"], 95);
+        assert_eq!(value["tid_v2"], 2102);
+    }
+
+    #[test]
+    fn studio_tid_v2_does_not_conflict_with_extra_fields() {
+        let mut raw = base_studio_json();
+        raw["tid_v2"] = serde_json::json!(2102);
+        raw["watermark"] = serde_json::json!({"state": 0});
+        let studio: Studio = serde_json::from_value(raw).unwrap();
+        assert_eq!(studio.tid_v2, Some(2102));
+        let value = serde_json::to_value(&studio).unwrap();
+        assert_eq!(value["tid_v2"], 2102);
+        assert_eq!(value["watermark"]["state"], 0);
+        assert_eq!(
+            studio
+                .extra_fields
+                .as_ref()
+                .unwrap()
+                .get("watermark")
+                .unwrap()["state"],
+            0
+        );
+
+        // Prefer first-class field when present; unrelated flatten keys still work.
+        let via_extra: Studio = serde_json::from_value(serde_json::json!({
+            "tid": 95,
+            "title": "t",
+            "watermark": {"state": 0}
+        }))
+        .unwrap();
+        assert!(via_extra.tid_v2.is_none());
+        assert_eq!(
+            via_extra
+                .extra_fields
+                .as_ref()
+                .unwrap()
+                .get("watermark")
+                .unwrap()["state"],
+            0
         );
     }
 }

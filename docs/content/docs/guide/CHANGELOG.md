@@ -2,7 +2,7 @@
 title = "更新日志"
 description = "CHANGELOG"
 date = 2021-05-01T08:20:00+00:00
-updated = 2021-05-01T08:20:00+00:00
+updated = 2026-10-09T00:00:00+00:00
 draft = false
 weight = 20
 sort_by = "weight"
@@ -19,20 +19,25 @@ top = false
 - 🔧已修复的问题
 - ⚠️需要手动操作的更新信息
 
-## Unreleased（当前 master）
-### 投稿与录制
-- 💡 feat(#1662): 投稿模板、旧版配置导入、Web UI、CLI 和 Python/stream-gears 上传入口支持可选新版分区 `tid_v2`，投稿时序列化为 B 站要求的 `human_type2`。稿件详情中的 `human_type2: {id, ...}` 也可以被正确读取；未配置时不会发送该字段。
-- 💡 feat(#1650): 斗鱼增加 `douyu_codec: h264|h265`。H.265 模式优先使用 `player_1` 直链，不可用时回退 H.264；原生 FLV 下载器支持斗鱼 HEVC codec id 12，并在分段时重新注入元数据、AAC 和视频序列头。
-- 🔧 fix(#1652): 抖音 PushFrame、gzip、Response 解码失败改为显式错误；损坏的聊天消息会跳过并告警，重复解码错误采用限频告警，避免空弹幕文件掩盖协议变化。
-- 🔧 fix(#1617): 命令行上传在最终投稿前保留断点元数据；边录边传失败时保存 `data/pending_uploads/` 清单。账号恢复后可使用相同参数或 `retry-upload` 重试投稿，成功后自动清理断点。
-- 🔧 fix(#1622): 请求 MP4 输出时自动切换到 FFmpeg 有效 remux，避免仅修改扩展名造成“没有可用视频流”；原生 stream-gears 仍保留源容器输出。
-- 🔧 fix(#1620, #1651): HLS 清单出现媒体序号跳号时自动切段；原生 FLV 检测到明显时间戳回退时丢弃跨断流缓存，并在下一个关键帧切换新文件，避免生成内部时间戳跳变的稿件。
-- 🔧 fix(#1647): B 站播放信息解析不再假设第一个 stream/format/codec 一定可用，会遍历接口返回的候选项并选择有效流。
-- 🔧 fix(#1655, #1657, #1651): FFmpeg 被取消或异常退出时不再把未完成的 `.part` 文件发布为可上传分段，避免虎牙/抖音短片段和损坏容器进入后续流程。
-- 💡 feat(#1619): `biliup server --background` 在后台启动并脱离终端；也可继续使用 nohup 或 systemd。启用 Web 认证后，管理员密码在首次访问时设置。
-- 💡 feat(#1618): Web UI 用户管理新增“修改 Web 密码”，修改后当前会话失效，需要使用新密码重新登录。
-
-详细配置示例见 [`public/config.yaml`](https://github.com/biliup/biliup/blob/master/public/config.yaml) 和 [`public/config.toml`](https://github.com/biliup/biliup/blob/master/public/config.toml)。
+## 未发布
+- 💡斗鱼 Web 登录 Cookie 支持使用 `LTP0` 与配套 `dy_did` 自动续期，保存调度状态并更新运行中的请求；房间配置可明确继承全局登录、使用独立 Cookie 或匿名取流。说明见[斗鱼登录、Cookie 续期与画质设置](@/docs/tutorials/douyu-cookie-guide.md)。
+- 💡增加画面遮挡编辑器：在真实直播截帧上圈选马赛克、模糊或纯色区域，分段关闭后处理；待遮挡原片不会进入投稿或切片导出。分段时长支持预设、自定义和主播级继承／关闭。
+- 🔧必要遮挡在碎片过滤之前执行，工作台引用而保留的小分段也会完成遮挡。默认不自动合并本地分段；快速合并与后处理脚本说明见[录制分段、画面遮挡与本地合并](@/docs/tutorials/recording-and-masking.md)。
+- 🔧落盘 FLV 分段自动检查 AAC 音频包时间戳；发现重复或回退时修复并重新编码音频为 192 kbps AAC，正常音频保持复制。遮挡任务复用同一修复步骤；输出需通过严格递增校验，失败保留原片且不进入投稿或后处理。已有录像与边录边传不自动追溯处理，说明见[FLV 音频时间戳检查与自动修复](@/docs/tutorials/recording-and-masking.md#flv-yin-pin-shi-jian-chuo-jian-cha-yu-zi-dong-xiu-fu)。
+- ⚠️没有配置下载插件（`downloader`）的主播，默认下载插件从 stream-gears 改为 mesio。显式配置了 `downloader` 的不受影响；想保持原样，把 `downloader` 设为 `stream-gears` 即可。mesio 写出的 FLV 带关键帧索引（`onMetaData.keyframes`）、每段时间戳从 0 开始，播放器可以拖动进度条；能录 HEVC / Enhanced-FLV 和 B 站 `hls_fmp4`。行为上的变化：
+  - 不转封装，容器跟随源站：FLV 流存 `.flv`，HLS TS 存 `.ts`，HLS fMP4（如 B 站 `hls_fmp4`）存 `.mp4`；配置的 `format` 与实际容器不一致时只在日志里提示。
+  - 录制中直接写最终文件名，不再先写 `.part` 再改名。
+  - 斗鱼网宿 CDN 断开重连时，相邻两段之间会有 2.6–5.8 秒的重复画面（stream-gears 会丢掉这段回灌）。
+- 🔧stream-gears：断流、读超时、下播时不再丢掉最后一个 GOP（通常 1–10 秒）；分段钩子在文件写完（flush）之后才触发，盘满等写入错误不再被静默吞掉。
+- 🔧`ffmpeg-external` / `ffmpeg-internal` 不再被静默换成 stream-gears，改为按 ffmpeg 录制。
+- 🔧`segment_time` 在 stream-gears、mesio、ffmpeg 下按同一种写法解析：`HH:MM:SS`、`MM:SS` 或秒数（如 `3600`），和 ffmpeg 一致。以前 stream-gears 遇到 `3600`、`01:00` 这类写法下载任务会 panic 中断，mesio 会静默当成不分段；现在都能正确分段，确实写错的值会在日志里提示并按不分段录制。
+- 💡WebUI 的「视频分段大小（file_size）」改成数值 + 单位（MB / GB）输入，按 1024 进制换算（1 GB = 1024 MB，与 Windows 资源管理器一致），配置文件里存的仍是字节数，旧配置原样可读。
+- 🔧主播「配置覆写」里把已有的 `file_size` 清空后保存，现在会真正写成「不按大小分段」；以前清空后保存，原来的值原样留着。
+- 🔧请求 MP4 输出（`format: mp4`）时，未配置下载插件或配置为 stream-gears 的主播改用 ffmpeg 真正转封装，避免只改扩展名得到无法播放的文件；边录边传与显式 mesio 保持原样。
+- ⚠️未完成的录像一律保留、不删除：断流、出错、暂停或删除房间、退出程序时，已写下的 FLV / TS 照常作为分段保存并上传；ffmpeg 录 MP4 被中止（未写完 moov、无法播放）时不进入上传流程，但 `.mp4.part` 文件留在录像目录里供手动处理。
+- 🔧斗鱼 CDN 切换时录制不再中断：时间戳归 0（`Non-monotonous DTS ... previous: 4877, current: 0`）按音频、视频轨道分别平移接上，不再因音视频交错把时间轴越拉越长；切换瞬间的空 tag / 残缺 tag 跳过，重发的 FLV 文件头跳过，连接在 tag 中间断开按正常断流结束。一个有效 tag 都还没读到时仍按原样报错。
+- 🔧HLS 清单出现媒体序号跳号时自动切段，避免同一文件内时间戳跳变。
+- 🔧抖音弹幕 PushFrame、gzip、Response 解码失败改为显式错误；损坏的聊天消息跳过并告警，重复解码错误限频告警。
 
 ## 1.2.1
 **Full Changelog**:[v1.2.0...v1.2.1](https://github.com/biliup/biliup/compare/v1.2.0...v1.2.1)
