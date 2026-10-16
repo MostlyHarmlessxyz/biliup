@@ -45,6 +45,10 @@ jobs:
           npm run build
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check workspace formatting
+        run: cargo fmt --all -- --check
       - uses: Swatinem/rust-cache@v2
       # 媒体测试必须使用真实 FFmpeg 和与预览共用的中文字体；弹幕 XML -> ASS 已静态链接进 biliup，
       # 不再安装外部转换器。BILIUP_REQUIRE_RENDER_TESTS 让缺少字体时测试失败而不是跳过。
