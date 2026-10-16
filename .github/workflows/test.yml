@@ -17,18 +17,29 @@ on:
           - windows-latest
           - macos-latest
           - ubuntu-latest
+      suite:
+        description: Run all checks or one native test stage
+        type: choice
+        default: all
+        options:
+          - all
+          - core
+          - cli-worker
+          - python-worker
+          - lifecycle
+          - clippy
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref_name }}-${{ inputs.platform || 'all' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref_name }}-${{ inputs.platform || 'all' }}-${{ inputs.suite || 'all' }}
   cancel-in-progress: true
 
 jobs:
   npm-launcher:
     name: npm launcher tests
-    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all'
+    if: github.event_name != 'workflow_dispatch' || (inputs.platform == 'all' && inputs.suite == 'all')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -43,7 +54,7 @@ jobs:
 
   rust:
     name: Rust tests
-    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all'
+    if: github.event_name != 'workflow_dispatch' || (inputs.platform == 'all' && inputs.suite == 'all')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -115,24 +126,29 @@ jobs:
           sudo locale-gen de_DE.UTF-8
           echo "BILIUP_REQUIRE_LOCALE_TEST=1" >> "$GITHUB_ENV"
       - name: Native core, transactions and compatibility
+        if: github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'core'
         run: cargo test --locked -p danmaku-factory
       - name: Real binary worker protocol and publication races
+        if: github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'cli-worker'
         run: cargo test --locked -p biliup-cli --test danmaku_worker
       - name: Real Python extension worker launcher
+        if: github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'python-worker'
         run: cargo test --locked -p stream-gears --test danmaku_worker
       - name: Worker supervision, cancellation and recovery
+        if: github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'lifecycle'
         run: |
           cargo test --locked -p biliup-cli --lib server::workbench::renders::danmaku::tests
           cargo test --locked -p biliup-cli --lib server::workbench::renders::jobs::progress_tests::recovery
           cargo test --locked -p biliup-cli --lib server::workbench::renders::danmaku_directory
           cargo test --locked -p biliup-cli --lib server::workbench::renders::engine::danmaku_cleanup_tests
       - name: Native core static checks
+        if: github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'clippy'
         run: cargo clippy --locked -p danmaku-factory --all-targets -- -D warnings
 
   # 冻结 C 包装层的 ASan/UBSan/LSan 及符号检查（Gate 0–5 oracle）。
   danmaku-factory-sanitizers:
     name: DanmakuFactory core under sanitizers
-    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all'
+    if: github.event_name != 'workflow_dispatch' || (inputs.platform == 'all' && inputs.suite == 'all')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -143,7 +159,7 @@ jobs:
   # 原版 CLI 除标记的上游缺陷用例外必须逐字节相同
   danmaku-factory-golden:
     name: DanmakuFactory golden corpus matches the CLI
-    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all'
+    if: github.event_name != 'workflow_dispatch' || (inputs.platform == 'all' && inputs.suite == 'all')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -173,7 +189,7 @@ jobs:
   # desktop-publish.yml 只在发版时跑，漂移要到那时才暴露（v1.2.9 就是这样）
   desktop-lockfile:
     name: Desktop Cargo.lock up to date
-    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all'
+    if: github.event_name != 'workflow_dispatch' || (inputs.platform == 'all' && inputs.suite == 'all')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
