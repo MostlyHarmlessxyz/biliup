@@ -654,3 +654,6 @@ Gate 5 Linux 性能验收（最终64B/容量提示快照，三平台Gate整体�
 根因核对至 tempfile 3.27.0 Windows 实现：创建文件走 Rust 路径处理，persist 则直接向 SetFileAttributesW/MoveFileExW 传入路径。修复仅在 Windows 将已存在的父目录 canonicalize 为扩展长度路径，再分别创建临时文件和无覆盖发布不存在的目标；ASS 和 worker JSON 响应同时处理。保留原长路径断言，并增加长 Unicode 目录的真实 worker/ASS/JSON/句柄释放回归；等待修复提交的真实 Windows 重跑。17个历史格式文件已独立提交为 `832f6a0`，全 workspace fmt 已通过，并补上 CI 检查。
 
 同一 run 的 macOS job `117011215878` 核心通过，构建 CLI 时在既有 `gpu.rs:87` 报 E0282：macOS 不编译 Linux/Windows 的设备初始化分支，字段访问时 Vec 元素类型尚无法推导。仅补显式 `Vec<GpuDevice>` 类型，不改探测行为。Windows 修复后 Linux 回归为66项核心/集成测试及7项真实worker全部通过，核心严格Clippy通过；该Linux结果不替代两平台实际重跑。
+
+- 先导 PR #2 的 Test `38912156154`、sdist `38912155575`、Docker 容器 `38912155757` 和 Docs `38912155524` 全部适用检查成功后，以常规 merge 合入 `master@6f2d4ee12ae46b9b7b906af6167f0dbe5b9574cd`；无保护绕过、强推或凭据修改。PR #3 已改以 master 为 base，本地正常合并 master，33个既有提交不再计入迁移 diff。先导合并后的实际镜像推送仍待默认分支运行确认。
+- `3318aa2` 的 Windows job `117016482265` 在故障注入测试发现残留路径显示不同：规范化诊断展开了Runner短目录名，测试枚举仍返回原路径。仅在Windows将被核验的实际残留canonicalize，仍严格核对完整诊断路径并实际删除；4项Linux事务测试复跑通过。GPU类型注解后32项现有GPU回归通过。Rust cache允许失败时保存依赖，测试仍照常执行且失败退出，不影响验收。
