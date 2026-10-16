@@ -251,6 +251,10 @@ mod tests {
             .unwrap()
             .unwrap()
             .path();
+        // Windows diagnostics name the verbatim directory used for publication,
+        // which may also expand the runner's short (8.3) temporary-directory name.
+        #[cfg(windows)]
+        let residue = residue.canonicalize().unwrap();
         assert!(failure.detail.contains(&residue.display().to_string()));
         std::fs::remove_file(residue).unwrap();
     }
