@@ -68,6 +68,9 @@ jobs:
   danmaku-native:
     name: Native danmaku and worker (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     env:
       BILIUP_REQUIRE_LOCALE_TEST: '1'
     strategy:
