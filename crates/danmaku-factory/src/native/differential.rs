@@ -56,8 +56,8 @@ fn legacy_layout_decisions_match_frozen_c_events() {
         serde_json::from_slice(&std::fs::read(root.join("cases.json")).unwrap()).unwrap();
     let mut checked = 0;
     for case in cases {
-        // These four inputs require per-event IC explanations before final
-        // Gate4 acceptance. All other cases have immutable byte expectations.
+        // These four inputs have separate assertions for intentional changes.
+        // All other cases retain their immutable byte expectations.
         if matches!(
             case.input.as_str(),
             "long_text.xml" | "special_chars.xml" | "trailing_ref.xml" | "unsorted.xml"
@@ -358,7 +358,7 @@ fn intentional_change_events_have_independent_text_and_layout_assertions() {
                 assert!(lines[5].ends_with(&"空\\h格\\h很\\h多\\h的\\h弹\\h幕\\h".repeat(40)));
             }
             "unsorted.xml" => {
-                let oracle = include_bytes!("../../tests/baseline/intentional/unsorted-stable.ass");
+                let oracle = include_bytes!("../../tests/fixtures/unsorted-stable.ass");
                 assert_eq!(
                     text.as_bytes(),
                     oracle,

@@ -76,11 +76,11 @@ impl Deref for LayoutedPool {
     }
 }
 impl LayoutedPool {
-    #[allow(dead_code)] // Used by the standalone benchmark and direct layout tests.
+    #[cfg(test)]
     pub(crate) fn into_records(self) -> Vec<Danmaku> {
         self.records
     }
-    #[allow(dead_code)] // The standalone memory profiler observes retained capacity.
+    #[cfg(test)]
     pub(crate) fn capacity(&self) -> usize {
         self.records.capacity()
     }

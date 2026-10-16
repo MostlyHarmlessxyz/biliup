@@ -6,9 +6,8 @@ DanmakuFactory by hkm, MIT licensed, reference commit
 3813e93b13b087e95901d1822baf9c3540e3f3f6.
 Source: https://github.com/hihkm/DanmakuFactory
 
-The production converter is native Rust. The retained C/PCRE2 sources are a
-development migration oracle; they are not linked into the production biliup
-converter. Their separate source notices remain with the reference crate.
+The production converter is native Rust and does not include the former
+DanmakuFactory C implementation or its PCRE2 dependency.
 
 MIT License
 

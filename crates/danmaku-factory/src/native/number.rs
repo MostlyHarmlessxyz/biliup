@@ -299,7 +299,7 @@ mod tests {
     #[test]
     fn time_matches_independent_c_probe_before_ass_quantization() {
         let cases: serde_json::Value =
-            serde_json::from_str(include_str!("../../tests/baseline/time.json")).unwrap();
+            serde_json::from_str(include_str!("../../tests/fixtures/time.json")).unwrap();
         for case in cases.as_array().unwrap() {
             let source = source_time_ms(case["seconds"].as_str().unwrap()).unwrap();
             assert_eq!(source, case["source_time_ms"].as_i64().unwrap());

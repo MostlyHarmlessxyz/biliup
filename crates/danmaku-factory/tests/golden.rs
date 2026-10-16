@@ -1,7 +1,6 @@
-//! The statically linked core must write exactly what the DanmakuFactory CLI
-//! writes. tests/golden/expected was produced by the CLI (pinned commit plus
-//! biliup's patches) and checked against the unmodified pinned CLI; see
-//! tests/golden/generate.py.
+//! Compare the native converter with immutable DanmakuFactory CLI output from
+//! commit 3813e93b13b087e95901d1822baf9c3540e3f3f6 plus biliup's fixes.
+//! Reviewed text and stable-sort changes have independent assertions.
 
 use danmaku_factory::{ConvertOptions, convert_xml_to_ass};
 use serde::Deserialize;

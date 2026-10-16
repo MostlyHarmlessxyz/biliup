@@ -1,9 +1,9 @@
 //! Reviewed IC expectations derived from the frozen C bytes, never from Rust
-//! output. Every unmentioned byte stays unchanged. See baseline/intentional-changes.json
-//! and the independent native intermediate assertions for affected layout values.
+//! output. Every unmentioned byte stays unchanged; independent native assertions
+//! verify the affected text and layout values.
 pub fn expected(input: &str, legacy: Vec<u8>) -> Vec<u8> {
     if input == "unsorted.xml" {
-        return include_bytes!("../baseline/intentional/unsorted-stable.ass").to_vec();
+        return include_bytes!("../fixtures/unsorted-stable.ass").to_vec();
     }
     let mut lines: Vec<Vec<u8>> = legacy
         .split(|&byte| byte == b'\n')
