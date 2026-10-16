@@ -652,3 +652,5 @@ Gate 5 Linux 性能验收（最终64B/容量提示快照，三平台Gate整体�
 首轮远端执行：先导 PR 为 #2（`master ← integration/render-worker-prerequisites`）；迁移 Draft PR 为 #3（先堆叠于先导分支，先导合并后再切到 master）。迁移 `b9455087b7c3a09208ee6bdda7594d77bbc9e1c1` 的 Test run `38912214719` 实际启动三平台，Windows job `117011216103` 的54项核心单测通过，但 errors 中的 `long_paths_on_windows` 在最终 publish 报 Win32 error3，后续测试因此未执行，不能记为 Gate5 通过。
 
 根因核对至 tempfile 3.27.0 Windows 实现：创建文件走 Rust 路径处理，persist 则直接向 SetFileAttributesW/MoveFileExW 传入路径。修复仅在 Windows 将已存在的父目录 canonicalize 为扩展长度路径，再分别创建临时文件和无覆盖发布不存在的目标；ASS 和 worker JSON 响应同时处理。保留原长路径断言，并增加长 Unicode 目录的真实 worker/ASS/JSON/句柄释放回归；等待修复提交的真实 Windows 重跑。17个历史格式文件已独立提交为 `832f6a0`，全 workspace fmt 已通过，并补上 CI 检查。
+
+同一 run 的 macOS job `117011215878` 核心通过，构建 CLI 时在既有 `gpu.rs:87` 报 E0282：macOS 不编译 Linux/Windows 的设备初始化分支，字段访问时 Vec 元素类型尚无法推导。仅补显式 `Vec<GpuDevice>` 类型，不改探测行为。Windows 修复后 Linux 回归为66项核心/集成测试及7项真实worker全部通过，核心严格Clippy通过；该Linux结果不替代两平台实际重跑。
