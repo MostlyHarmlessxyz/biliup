@@ -102,7 +102,8 @@ fn comma_decimal_locale_preserves_complete_output() {
         }) else {
             unsafe { setlocale(lc_numeric, c"C".as_ptr()) };
             assert!(
-                std::env::var_os("BILIUP_REQUIRE_LOCALE_TEST").is_none(),
+                std::env::var_os("BILIUP_REQUIRE_LOCALE_TEST").is_none()
+                    && std::env::var_os("BILIUP_REQUIRE_RENDER_TESTS").is_none(),
                 "comma-decimal locale unavailable"
             );
             use std::io::Write;

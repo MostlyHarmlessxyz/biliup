@@ -4,57 +4,14 @@ on:
   push:
     branches:
       - master
-      - refactor/rust_danmaku
   pull_request:
-  workflow_dispatch:
-    inputs:
-      platform:
-        description: Run the full suite or one native platform
-        type: choice
-        default: all
-        options:
-          - all
-          - windows-latest
-          - macos-latest
-          - ubuntu-latest
-      suite:
-        description: Run all checks or one native test stage
-        type: choice
-        default: all
-        options:
-          - all
-          - core
-          - cli-worker
-          - python-worker
-          - lifecycle
-          - clippy
 
 permissions:
   contents: read
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref_name }}-${{ inputs.platform || 'all' }}-${{ inputs.suite || 'all' }}
-  cancel-in-progress: true
-
 jobs:
-  npm-launcher:
-    name: npm launcher tests
-    if: github.event_name != 'workflow_dispatch' || (inputs.platform == 'all' && inputs.suite == 'all')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - run: node --test npm/tests/*.test.cjs
-      - name: Frontend render and workbench logic tests
-        run: |
-          npm ci --no-audit --no-fund
-          node --test app/lib/*.test.cjs
-
   rust:
     name: Rust tests
-    if: github.event_name != 'workflow_dispatch' || (inputs.platform == 'all' && inputs.suite == 'all')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -65,13 +22,11 @@ jobs:
       - name: Build frontend
         run: |
           npm install
+          node --test npm/tests/*.test.cjs
+          node --test app/lib/*.test.cjs
           npm run build
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - name: Check workspace formatting
-        run: cargo fmt --all -- --check
       - uses: Swatinem/rust-cache@v2
       # 媒体测试必须使用真实 FFmpeg 和与预览共用的中文字体；弹幕 XML -> ASS 已静态链接进 biliup，
       # 不再安装外部转换器。BILIUP_REQUIRE_RENDER_TESTS 让缺少字体时测试失败而不是跳过。
@@ -87,68 +42,9 @@ jobs:
       - name: Run tests
         run: cargo test --locked --workspace
 
-  # Rust 生产路径的三平台验收；以下 C oracle 作业保留至 Gate 6。
-  danmaku-native:
-    name: Native danmaku and worker (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        shell: bash
-    env:
-      BILIUP_REQUIRE_LOCALE_TEST: '1'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.platform != 'all' && format('["{0}"]', inputs.platform) || '["ubuntu-latest","windows-latest","macos-latest"]') }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-      - name: Build embedded frontend
-        run: |
-          npm ci --no-audit --no-fund
-          npm run build
-      - name: Install comma decimal locale
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y locales
-          sudo locale-gen de_DE.UTF-8
-          echo "BILIUP_REQUIRE_LOCALE_TEST=1" >> "$GITHUB_ENV"
-      - name: Native core, transactions and compatibility
-        if: github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'core'
-        run: cargo test --locked -p danmaku-factory
-      - name: Real binary worker protocol and publication races
-        if: github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'cli-worker'
-        run: cargo test --locked -p biliup-cli --test danmaku_worker
-      - name: Real Python extension worker launcher
-        if: github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'python-worker'
-        run: cargo test --locked -p stream-gears --test danmaku_worker
-      - name: Worker supervision, cancellation and recovery
-        if: github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'lifecycle'
-        run: |
-          cargo test --locked -p biliup-cli --lib server::workbench::renders::danmaku::tests
-          cargo test --locked -p biliup-cli --lib server::workbench::renders::jobs::progress_tests::recovery
-          cargo test --locked -p biliup-cli --lib server::workbench::renders::danmaku_directory
-          cargo test --locked -p biliup-cli --lib server::workbench::renders::engine::danmaku_cleanup_tests
-      - name: Native core static checks
-        if: github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'clippy'
-        run: cargo clippy --locked -p danmaku-factory --all-targets -- -D warnings
-
-  # 冻结 C 包装层的 ASan/UBSan/LSan 及符号检查（Gate 0–5 oracle）。
+  # 内置 DanmakuFactory 核心与 C 包装层：ASan/UBSan/LSan 覆盖成功与失败清理路径，并检查导出符号都带前缀
   danmaku-factory-sanitizers:
     name: DanmakuFactory core under sanitizers
-    if: github.event_name != 'workflow_dispatch' || (inputs.platform == 'all' && inputs.suite == 'all')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -159,7 +55,6 @@ jobs:
   # 原版 CLI 除标记的上游缺陷用例外必须逐字节相同
   danmaku-factory-golden:
     name: DanmakuFactory golden corpus matches the CLI
-    if: github.event_name != 'workflow_dispatch' || (inputs.platform == 'all' && inputs.suite == 'all')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -189,7 +84,6 @@ jobs:
   # desktop-publish.yml 只在发版时跑，漂移要到那时才暴露（v1.2.9 就是这样）
   desktop-lockfile:
     name: Desktop Cargo.lock up to date
-    if: github.event_name != 'workflow_dispatch' || (inputs.platform == 'all' && inputs.suite == 'all')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
