@@ -262,9 +262,23 @@ fn cleanup_danmaku_root_with(
     if !recovery_lock(&manifest_file)? {
         return Ok(false);
     }
+    // Retire the root while its lease is exclusive. Late parents/workers must
+    // reject it after this point, including a crash before the rename. Close
+    // every handle inside the directory before renaming it on Windows; the
+    // external manifest stays locked throughout rename and recursive removal.
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(canonical.join(crate::danmaku_worker::ROOT_RETIRED_FILE))
+    {
+        Ok(file) => file.sync_all()?,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error),
+    }
+    drop(lease);
     if canonical != tombstone {
-        // The exclusive root lease protects this rename; the unpredictable
-        // original-root token and create-new manifest bind the destination.
+        // The retired marker prevents new workers; the unpredictable original
+        // token and the locked create-new manifest bind the destination.
         if std::fs::symlink_metadata(&tombstone).is_ok() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::AlreadyExists,
@@ -273,7 +287,6 @@ fn cleanup_danmaku_root_with(
         }
         std::fs::rename(&canonical, &tombstone)?;
     }
-    drop(lease); // Windows: release all handles inside the subtree before removal.
     remove_recovery_tombstone(&tombstone, &manifest_path, manifest_file, remove)
 }
 
@@ -1183,6 +1196,12 @@ mod progress_tests {
         assert!(!cleanup_inactive_danmaku_root(&manifest).unwrap());
         assert!(managed.exists() && manifest.exists());
         drop(active);
+        // A crash after retirement but before rename must still be recoverable.
+        std::fs::File::create_new(managed.join(crate::danmaku_worker::ROOT_RETIRED_FILE))
+            .unwrap()
+            .sync_all()
+            .unwrap();
+        assert!(crate::danmaku_worker::acquire_root_lease(&managed).is_err());
         assert!(cleanup_inactive_danmaku_root(&manifest).unwrap());
         assert!(!managed.exists() && !manifest.exists());
         let private = tempfile::tempdir_in(directory.path()).unwrap();

@@ -50,6 +50,7 @@ fn gui_options() -> Value {
 }
 
 fn run_worker(work: &Path, request: Value) -> (i32, Option<Value>, String) {
+    let result_path = work.join(request["result"].as_str().unwrap());
     std::fs::write(work.join("request.json"), request.to_string()).unwrap();
     let output = Command::new(BILIUP)
         .args([WORKER_FLAG, "request.json"])
@@ -57,7 +58,7 @@ fn run_worker(work: &Path, request: Value) -> (i32, Option<Value>, String) {
         .env_remove("RUST_LOG")
         .output()
         .unwrap();
-    let result = std::fs::read(work.join("result.json"))
+    let result = std::fs::read(result_path)
         .ok()
         .map(|bytes| serde_json::from_slice(&bytes).unwrap());
     (
@@ -109,9 +110,11 @@ fn the_real_worker_publishes_ass_and_response_in_a_long_unicode_directory() {
     }
     std::fs::create_dir_all(&nested).unwrap();
     std::fs::copy(golden("inputs/basic_cn.xml"), nested.join("in.xml")).unwrap();
+    // Windows cannot create a process with a cwd beyond MAX_PATH. Keep the
+    // worker directory short while all conversion/result paths stay long.
     let (code, result, stderr) = run_worker(
-        &nested,
-        json!({"protocol":PROTOCOL,"input":"in.xml","output":nested.join("out.ass"),
+        work.path(),
+        json!({"protocol":PROTOCOL,"input":nested.join("in.xml"),"output":nested.join("out.ass"),
                "result":nested.join("result.json"),"options":gui_options()}),
     );
     assert_eq!(code, EXIT_CONVERTED, "{stderr}");
@@ -120,7 +123,7 @@ fn the_real_worker_publishes_ass_and_response_in_a_long_unicode_directory() {
         read_ass(nested.join("out.ass")),
         std::fs::read(golden("expected/basic_cn-biliup.ass")).unwrap()
     );
-    assert_eq!(std::fs::read_dir(&nested).unwrap().count(), 4);
+    assert_eq!(std::fs::read_dir(&nested).unwrap().count(), 3);
     std::fs::rename(nested.join("out.ass"), nested.join("已释放.ass")).unwrap();
     std::fs::remove_dir_all(&nested).unwrap();
 }
@@ -147,7 +150,11 @@ fn failures_are_reported_in_the_result_and_exit_code() {
                "options": {}}),
     );
     assert_eq!(code, EXIT_BAD_REQUEST, "{stderr}");
-    assert!(result.is_some_and(|r| r["outcome"] == "failed")); // the earlier result
+    assert!(result.is_none());
+    let earlier: Value =
+        serde_json::from_slice(&std::fs::read(work.path().join("result.json")).unwrap()).unwrap();
+    assert_eq!(earlier["outcome"], "failed");
+    assert_eq!(earlier["error"]["kind"], "no_danmaku");
     assert!(!work.path().join("other.json").exists());
     let output = Command::new(BILIUP)
         .arg(WORKER_FLAG)

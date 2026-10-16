@@ -38,6 +38,7 @@ pub const PROTOCOL: u32 = 1;
 /// worker. Recovery must take the exclusive lock before reclaiming a root.
 pub const ROOT_LEASE_FILE: &str = ".biliup-danmaku-lease";
 pub const ATTEMPT_LEASE_FILE: &str = ".biliup-danmaku-attempt";
+pub(crate) const ROOT_RETIRED_FILE: &str = ".biliup-danmaku-retired";
 /// A delayed managed child must not fall back to the standalone path after
 /// recovery has already removed its in-directory identity marker.
 pub(crate) const MANAGED_WORKER_ENV: &str = "BILIUP_DANMAKU_MANAGED_WORKER";
@@ -75,6 +76,14 @@ fn invalid_lease(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.into())
 }
 
+fn require_active_root(root: &Path) -> io::Result<()> {
+    match std::fs::symlink_metadata(root.join(ROOT_RETIRED_FILE)) {
+        Ok(_) => Err(invalid_lease("managed root is retired for recovery")),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 fn read_lease(file: &File) -> io::Result<RootLease> {
     let mut file = file.try_clone()?;
     file.rewind()?;
@@ -90,6 +99,9 @@ fn read_lease(file: &File) -> io::Result<RootLease> {
 /// Verifies the locked marker still names this unique, unrenamed root. A
 /// delayed worker must fail this check after recovery renames the directory.
 pub fn validate_root_lease(root: &Path, file: &File) -> io::Result<()> {
+    // Recheck after acquiring the shared lock: recovery may have retired the
+    // root while a late worker was waiting for its exclusive lease to release.
+    require_active_root(root)?;
     let lease = read_lease(file)?;
     if lease.root != std::fs::canonicalize(root)? || lease.token.is_empty() {
         return Err(invalid_lease("managed root lease identity changed"));
@@ -105,6 +117,7 @@ pub fn validate_root_lease(root: &Path, file: &File) -> io::Result<()> {
 /// share the marker but hold independent OS locks.
 pub fn acquire_root_lease(root: &Path) -> io::Result<File> {
     let root = std::fs::canonicalize(root)?;
+    require_active_root(&root)?;
     let marker = root.join(ROOT_LEASE_FILE);
     if !marker.try_exists()? {
         let mut temporary = tempfile::Builder::new()

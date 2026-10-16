@@ -760,7 +760,7 @@ async fn cancellation_at_the_success_acceptance_checkpoint_is_not_success() {
 
 #[tokio::test]
 async fn a_delayed_worker_rejects_a_root_already_renamed_for_recovery() {
-    use crate::danmaku_worker::{acquire_root_lease, mark_attempt};
+    use crate::danmaku_worker::{ROOT_RETIRED_FILE, acquire_root_lease, mark_attempt};
     let owner = tempfile::tempdir().unwrap();
     let root = tempfile::Builder::new()
         .prefix(".render-")
@@ -777,6 +777,35 @@ async fn a_delayed_worker_rejects_a_root_already_renamed_for_recovery() {
     )
     .unwrap();
     std::fs::write(attempt.join(XML_FILE), SELF_TEST_XML).unwrap();
+    // Recovery must also exclude late workers after closing the internal
+    // lease and before renaming the directory (required by Windows).
+    let lease = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(root.path().join(crate::danmaku_worker::ROOT_LEASE_FILE))
+        .unwrap();
+    lease.try_lock().unwrap();
+    std::fs::File::create_new(root.path().join(ROOT_RETIRED_FILE))
+        .unwrap()
+        .sync_all()
+        .unwrap();
+    drop(lease);
+    assert!(acquire_root_lease(root.path()).is_err());
+    let mut command = crate::danmaku_worker::command(&attempt, Path::new(REQUEST_FILE)).unwrap();
+    command
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    let output = command.output().await.unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(crate::danmaku_worker::EXIT_BAD_REQUEST)
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("retired for recovery"));
+    assert!(!attempt.join(ASS_FILE).exists());
+    assert!(!attempt.join(RESULT_FILE).exists());
+    // Keep the existing identity check independent of retirement.
+    std::fs::remove_file(root.path().join(ROOT_RETIRED_FILE)).unwrap();
     let moved = owner.path().join("recovery-tombstone");
     std::fs::rename(root.path(), &moved).unwrap();
     let moved_attempt = moved.join(".danmaku-attempt-delayed");
