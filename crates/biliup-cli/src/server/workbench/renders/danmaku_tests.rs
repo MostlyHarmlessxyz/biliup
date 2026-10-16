@@ -173,6 +173,23 @@ fn golden(path: &str) -> PathBuf {
         .join(path)
 }
 
+fn assert_matches_golden_ass(actual: &[u8], expected: &[u8]) {
+    let text = decode_ass(actual);
+    #[cfg(windows)]
+    let text = {
+        assert!(
+            actual.starts_with(b"\xef\xbb\xbf"),
+            "Windows ASS needs its BOM"
+        );
+        assert!(
+            !text.replace("\r\n", "").contains('\n'),
+            "Windows ASS must use CRLF"
+        );
+        text.replace("\r\n", "\n")
+    };
+    assert_eq!(text, decode_ass(expected));
+}
+
 /// What the golden corpus calls "biliup": the options the GUI defaults
 /// produced on the command line of the former external DanmakuFactory.
 fn gui_defaults() -> DanmakuSettings {
@@ -281,7 +298,7 @@ async fn worker_writes_what_the_cli_wrote() {
             .unwrap();
         assert!(output.stats.danmaku_count > 0);
         let expected = std::fs::read(golden(&format!("expected/{name}-biliup.ass"))).unwrap();
-        assert_eq!(decode_ass(&output.ass), decode_ass(&expected), "{name}");
+        assert_matches_golden_ass(&output.ass, &expected);
         assert!(no_attempts(work.path()));
     }
 }
@@ -306,7 +323,7 @@ async fn paths_with_spaces_and_chinese_never_reach_the_worker() {
         .await
         .unwrap();
     let expected = std::fs::read(golden("expected/basic_cn-biliup.ass")).unwrap();
-    assert_eq!(decode_ass(&output.ass), decode_ass(&expected));
+    assert_matches_golden_ass(&output.ass, &expected);
 }
 
 #[tokio::test]
@@ -322,9 +339,9 @@ async fn concurrent_previews_use_separate_workers() {
         async move { convert_in_worker(work, xml, &options, &CancellationToken::new()).await }
     }))
     .await;
-    let expected = decode_ass(&std::fs::read(golden("expected/dense-biliup.ass")).unwrap());
+    let expected = std::fs::read(golden("expected/dense-biliup.ass")).unwrap();
     for result in results {
-        assert_eq!(decode_ass(&result.unwrap().ass), expected);
+        assert_matches_golden_ass(&result.unwrap().ass, &expected);
     }
     assert!(no_attempts(work.path()));
     assert!(started.elapsed() < Duration::from_secs(60));
