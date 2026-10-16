@@ -648,3 +648,7 @@ Gate 5 Linux 性能验收（最终64B/容量提示快照，三平台Gate整体�
 - 现有workflow未执行cargo fmt，17个历史格式差异没有导致该次Docker失败；本轮将以独立纯格式化commit解决，并保留格式检查门禁。
 - Windows checkout必须保留原Golden及独立ASS参考字节；仅为这些冻结资产增加 `.gitattributes -text`，不修改Expected内容。Test的push/PR同分支运行使用concurrency去重，保证最新提交实际执行。
 - 本轮核对原始证据：本地 `workspace-final-summary.json` 为1584/0/9，基准生产源码hash与最终源码一致，Secrets/凭据候选扫描无命中；后续以实际GitHub每个SHA的结果更新Gate5状态。
+
+首轮远端执行：先导 PR 为 #2（`master ← integration/render-worker-prerequisites`）；迁移 Draft PR 为 #3（先堆叠于先导分支，先导合并后再切到 master）。迁移 `b9455087b7c3a09208ee6bdda7594d77bbc9e1c1` 的 Test run `38912214719` 实际启动三平台，Windows job `117011216103` 的54项核心单测通过，但 errors 中的 `long_paths_on_windows` 在最终 publish 报 Win32 error3，后续测试因此未执行，不能记为 Gate5 通过。
+
+根因核对至 tempfile 3.27.0 Windows 实现：创建文件走 Rust 路径处理，persist 则直接向 SetFileAttributesW/MoveFileExW 传入路径。修复仅在 Windows 将已存在的父目录 canonicalize 为扩展长度路径，再分别创建临时文件和无覆盖发布不存在的目标；ASS 和 worker JSON 响应同时处理。保留原长路径断言，并增加长 Unicode 目录的真实 worker/ASS/JSON/句柄释放回归；等待修复提交的真实 Windows 重跑。17个历史格式文件已独立提交为 `832f6a0`，全 workspace fmt 已通过，并补上 CI 检查。

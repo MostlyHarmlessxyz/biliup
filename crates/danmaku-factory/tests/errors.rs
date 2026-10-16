@@ -428,6 +428,16 @@ fn long_paths_on_windows() {
     let output = nested.join("输出.ass");
     convert_xml_to_ass(&input, &output, &biliup_options()).unwrap();
     assert!(std::fs::metadata(&output).unwrap().len() > 1000);
+    let complete = std::fs::read(&output).unwrap();
+    assert_eq!(
+        convert_xml_to_ass(&input, &output, &biliup_options())
+            .unwrap_err()
+            .kind,
+        ErrorKind::OutputExists
+    );
+    assert_eq!(std::fs::read(&output).unwrap(), complete);
+    assert_eq!(std::fs::read_dir(&nested).unwrap().count(), 2);
+    std::fs::rename(&output, nested.join("released.ass")).unwrap();
     // Relative paths work as well.
     let relative = Path::new("relative-out.ass");
     let _ = std::fs::remove_file(relative);

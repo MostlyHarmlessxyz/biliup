@@ -419,6 +419,17 @@ fn publish_response(path: &Path, response: &Response) -> io::Result<()> {
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
+    // tempfile publishes through Win32 APIs; give both names the verbatim
+    // directory spelling needed beyond MAX_PATH, including a long worker cwd.
+    #[cfg(windows)]
+    let parent = parent.canonicalize()?;
+    #[cfg(windows)]
+    let destination =
+        parent.join(path.file_name().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "response has no filename")
+        })?);
+    #[cfg(windows)]
+    let path = destination.as_path();
     let mut temp = tempfile::Builder::new()
         .prefix(".danmaku-response-")
         .tempfile_in(parent)?;

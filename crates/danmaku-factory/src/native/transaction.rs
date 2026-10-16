@@ -86,6 +86,24 @@ fn publish_with(
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
+    // Rust's file APIs handle long Windows paths, but tempfile's publication
+    // calls Win32 directly. Canonicalize the existing directory so both its
+    // temporary name and the not-yet-existing destination use verbatim paths.
+    #[cfg(windows)]
+    let parent = parent
+        .canonicalize()
+        .map_err(|e| error(ErrorKind::OutputCreate, "resolve parent", path, e))?;
+    #[cfg(windows)]
+    let destination = parent.join(path.file_name().ok_or_else(|| {
+        error(
+            ErrorKind::OutputCreate,
+            "resolve filename",
+            path,
+            io::Error::new(io::ErrorKind::InvalidInput, "output has no filename"),
+        )
+    })?);
+    #[cfg(windows)]
+    let path = destination.as_path();
     hook(Stage::Create).map_err(|e| error(ErrorKind::OutputCreate, "create temporary", path, e))?;
     // tempfile 3.27 wraps creation errors in a private PathError which drops
     // raw_os_error from its public source chain. Capture the real create_new

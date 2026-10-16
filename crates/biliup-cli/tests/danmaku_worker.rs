@@ -101,6 +101,31 @@ fn the_binary_converts_like_the_cli_and_starts_nothing_else() {
 }
 
 #[test]
+fn the_real_worker_publishes_ass_and_response_in_a_long_unicode_directory() {
+    let work = tempfile::tempdir().unwrap();
+    let mut nested = work.path().to_path_buf();
+    while nested.as_os_str().len() < 320 {
+        nested.push("弹幕 0123456789abcdef");
+    }
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::copy(golden("inputs/basic_cn.xml"), nested.join("in.xml")).unwrap();
+    let (code, result, stderr) = run_worker(
+        &nested,
+        json!({"protocol":PROTOCOL,"input":"in.xml","output":nested.join("out.ass"),
+               "result":nested.join("result.json"),"options":gui_options()}),
+    );
+    assert_eq!(code, EXIT_CONVERTED, "{stderr}");
+    assert_eq!(result.unwrap()["outcome"], "converted");
+    assert_eq!(
+        read_ass(nested.join("out.ass")),
+        std::fs::read(golden("expected/basic_cn-biliup.ass")).unwrap()
+    );
+    assert_eq!(std::fs::read_dir(&nested).unwrap().count(), 4);
+    std::fs::rename(nested.join("out.ass"), nested.join("已释放.ass")).unwrap();
+    std::fs::remove_dir_all(&nested).unwrap();
+}
+
+#[test]
 fn failures_are_reported_in_the_result_and_exit_code() {
     let work = tempfile::tempdir().unwrap();
     std::fs::write(work.path().join("in.xml"), "<i></i>").unwrap();
