@@ -12,12 +12,33 @@ use biliup_cli::danmaku_worker::{
 use biliup_cli::server::workbench::renders::engine;
 use serde_json::{Value, json};
 
+#[path = "../../danmaku-factory/tests/support/mod.rs"]
+mod compatibility;
+
 const BILIUP: &str = env!("CARGO_BIN_EXE_biliup");
 
 fn golden(path: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../danmaku-factory/tests/golden")
         .join(path)
+}
+
+fn read_ass(path: impl AsRef<Path>) -> Vec<u8> {
+    let bytes = std::fs::read(path).unwrap();
+    if !cfg!(windows) {
+        return bytes;
+    }
+    let body = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap();
+    body.iter()
+        .enumerate()
+        .filter_map(|(at, &b)| {
+            if b == b'\r' && body.get(at + 1) == Some(&b'\n') {
+                None
+            } else {
+                Some(b)
+            }
+        })
+        .collect()
 }
 
 fn gui_options() -> Value {
@@ -62,8 +83,11 @@ fn the_binary_converts_like_the_cli_and_starts_nothing_else() {
     assert_eq!(result["stats"]["danmaku_count"], 9);
     assert!(result["version"].as_str().unwrap().contains("3813e93b"));
     assert_eq!(
-        std::fs::read(work.path().join("out.ass")).unwrap(),
-        std::fs::read(golden("expected/emoji-biliup.ass")).unwrap()
+        read_ass(work.path().join("out.ass")),
+        compatibility::expected(
+            "emoji.xml",
+            std::fs::read(golden("expected/emoji-biliup.ass")).unwrap()
+        )
     );
     // Worker mode returns before logging, configuration or the server.
     let mut left: Vec<_> = std::fs::read_dir(work.path())
@@ -106,6 +130,101 @@ fn failures_are_reported_in_the_result_and_exit_code() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(danmaku_worker::EXIT_USAGE));
+}
+
+#[test]
+fn the_real_worker_preserves_advanced_motion_fade_rotation_and_blocking() {
+    let work = tempfile::tempdir().unwrap();
+    std::fs::copy(golden("inputs/types.xml"), work.path().join("in.xml")).unwrap();
+    let (code, result, stderr) = run_worker(
+        work.path(),
+        json!({"protocol":PROTOCOL,"input":"in.xml","output":"out.ass","result":"result.json","options":gui_options()}),
+    );
+    assert_eq!(code, EXIT_CONVERTED, "{stderr}");
+    let result = result.unwrap();
+    assert_eq!(result["stats"]["danmaku_count"], 12);
+    assert_eq!(result["stats"]["blocked_count"], 1);
+    let ass = read_ass(work.path().join("out.ass"));
+    assert_eq!(
+        ass,
+        std::fs::read(golden("expected/types-biliup.ass")).unwrap()
+    );
+    let text = std::str::from_utf8(&ass).unwrap();
+    assert!(text.contains("\\move(192,216,1536,972,200,1700)\\c&H0000FF\\fry30\\fade(0,0,127,0,0,200,4500)\\fn微软雅黑"));
+    assert!(text.contains("\\pos(100,200)\\fs36\\fade(50,50,50,0,0,0,3000)"));
+}
+
+#[test]
+fn real_workers_race_for_one_complete_output_without_deleting_the_winner() {
+    let work = tempfile::tempdir().unwrap();
+    std::fs::copy(golden("inputs/dense.xml"), work.path().join("in.xml")).unwrap();
+    let mut children = Vec::new();
+    for index in 0..8 {
+        let request = format!("request-{index}.json");
+        std::fs::write(work.path().join(&request),json!({"protocol":PROTOCOL,"input":"in.xml","output":"out.ass","result":format!("result-{index}.json"),"options":gui_options()}).to_string()).unwrap();
+        children.push(
+            Command::new(BILIUP)
+                .args([WORKER_FLAG, &request])
+                .current_dir(work.path())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
+    }
+    let statuses: Vec<_> = children
+        .iter_mut()
+        .map(|child| child.wait().unwrap())
+        .collect();
+    assert_eq!(statuses.iter().filter(|status| status.success()).count(), 1);
+    for (index, status) in statuses.iter().enumerate() {
+        let response: Value = serde_json::from_slice(
+            &std::fs::read(work.path().join(format!("result-{index}.json"))).unwrap(),
+        )
+        .unwrap();
+        if status.success() {
+            assert_eq!(response["outcome"], "converted");
+        } else {
+            assert_eq!(status.code(), Some(EXIT_FAILED));
+            assert_eq!(response["error"]["kind"], "output_exists");
+        }
+    }
+    assert_eq!(
+        read_ass(work.path().join("out.ass")),
+        std::fs::read(golden("expected/dense-biliup.ass")).unwrap()
+    );
+    assert!(!std::fs::read_dir(work.path()).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".biliup-danmaku-")
+    }));
+    std::fs::rename(work.path().join("out.ass"), work.path().join("renamed.ass")).unwrap();
+}
+
+#[test]
+fn response_publication_failure_cannot_replace_an_existing_result() {
+    let work = tempfile::tempdir().unwrap();
+    std::fs::copy(golden("inputs/basic_cn.xml"), work.path().join("in.xml")).unwrap();
+    std::fs::write(work.path().join("result.json"), b"keep earlier task result").unwrap();
+    std::fs::write(work.path().join("request.json"),json!({"protocol":PROTOCOL,"input":"in.xml","output":"out.ass","result":"result.json","options":gui_options()}).to_string()).unwrap();
+    let status = Command::new(BILIUP)
+        .args([WORKER_FLAG, "request.json"])
+        .current_dir(work.path())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    assert_eq!(status.code(), Some(danmaku_worker::EXIT_RESULT_UNWRITABLE));
+    assert_eq!(
+        std::fs::read(work.path().join("result.json")).unwrap(),
+        b"keep earlier task result"
+    );
+    assert_eq!(
+        read_ass(work.path().join("out.ass")),
+        std::fs::read(golden("expected/basic_cn-biliup.ass")).unwrap()
+    );
 }
 
 #[tokio::test]

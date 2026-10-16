@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "authority": "PLAN.md section 3.2 and explicit implementation authorization",
+  "review_rule": "Independent assertions and event-level comparison to the frozen C oracle are required; candidate golden classifications never exempt a complete file.",
+  "changes": [
+    {
+      "id": "IC-01",
+      "old": "C sort fast path does not compare the first pair.",
+      "contract": "Stable ascending source_time_ms before ASS quantization.",
+      "minimal_input": "<i><d p=\"2,1,25,16777215\">A</d><d p=\"1,1,25,16777215\">B</d><d p=\"3,1,25,16777215\">C</d></i>",
+      "independent_assertion": "input_sequence = [1,0,2]; source_time_ms = [1000,2000,3000]",
+      "candidate_goldens": ["unsorted-biliup"],
+      "review_status": "accepted: direct stable-millisecond assertions, fixed-seed properties, independent C output on stably permuted XML and external differential tests passed; see PLAN section 9"
+    },
+    {
+      "id": "IC-02",
+      "old": "C bucket insertion reverses equal keys when sorting is triggered.",
+      "contract": "Equal millisecond keys preserve input order; different keys that quantize to the same ASS time remain sorted by source milliseconds.",
+      "minimal_input": "<i><d p=\"1.004,1,25,16777215\">A</d><d p=\"1.001,1,25,16777215\">B</d><d p=\"1.001,1,25,16777215\">C</d></i>",
+      "independent_assertion": "labels = [B,C,A]; source_time_ms = [1001,1001,1004]; ass_start_ms = [1000,1000,1000]",
+      "candidate_goldens": ["unsorted-biliup"],
+      "review_status": "accepted: equal-key order and pre-quantization 1001/1001/1004ms assertions, independent C permutation baseline and external differential tests passed; see PLAN section 9"
+    },
+    {
+      "id": "IC-03",
+      "old": "Input and escaped ASS text are truncated to 1023 bytes.",
+      "contract": "All valid text is retained within source and decoded byte budgets; width uses complete logical text.",
+      "minimal_input_recipe": "A normal d element with text = [ASCII, Chinese, emoji, combining sequence] repeated beyond 1023 input and escaped bytes.",
+      "independent_assertion": "Exact logical-text bytes and full-length width; no replacement or missing tail; verify later affected layout events separately.",
+      "candidate_goldens": ["long_text-biliup"],
+      "review_status": "accepted: full text and independent affected-event metadata, 64MiB body and 128MiB XML stream tests, wide coordinate/font bounds and distinct performance workload passed; see PLAN section 9"
+    },
+    {
+      "id": "IC-04",
+      "old": "Byte truncation can split UTF-8; consumer silently drops invalid bytes.",
+      "contract": "Valid UTF-8 remains complete; invalid source UTF-8 and invalid XML numeric character references produce input errors.",
+      "minimal_input_recipe": "Use multibyte characters crossing byte 1023; test raw byte FF and XML &#55357; independently.",
+      "independent_assertion": "std::str::from_utf8 succeeds on output; exact byte suffix retained; invalid input rejected before publication.",
+      "candidate_goldens": ["long_text-biliup"],
+      "review_status": "accepted: exact valid Unicode suffix bytes and complete ASS UTF-8 verified; malformed UTF-8 and numeric references rejected, literal escaped references preserved; see PLAN section 9"
+    },
+    {
+      "id": "IC-05",
+      "old": "readXml and assEscape both decode XML entities and numeric references.",
+      "contract": "Decode XML once, then escape ordinary ASS text independently. Preserve type7 raw ASS and legacy /n semantics.",
+      "minimal_input": "<i><d p=\"1,1,25,16777215\">&amp;lt; &amp;#55357; {x} \\N \\h</d></i>",
+      "independent_assertion": "Logical text contains literal &lt; and &#55357;, braces cannot become override blocks, literal backslash escapes cannot become line breaks or spaces.",
+      "candidate_goldens": ["special_chars-biliup", "trailing_ref", "emoji-biliup"],
+      "review_status": "accepted: once-only entity/CDATA parsing, independent affected and unchanged event assertions and Legacy byte comparisons passed; type7 raw ASS retained; see PLAN section 9"
+    },
+    {
+      "id": "IC-06",
+      "old": "C refuses non-dot LC_NUMERIC.",
+      "contract": "Rust parsing and serialization always use dot decimals and produce identical output in C and installed comma-decimal locales.",
+      "minimal_input": "<i><d p=\"1.5,1,25,16777215\">locale</d></i>",
+      "independent_assertion": "Independent locale child processes both succeed with identical output; keep ErrorKind::Locale JSON compatibility.",
+      "candidate_goldens": [],
+      "review_status": "accepted on Linux: independent host subprocesses actually set C/comma LC_NUMERIC and compare complete public API ASS bytes; other OS runtime validation remains Gate5; see PLAN section 9"
+    }
+  ]
+}

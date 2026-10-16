@@ -4,10 +4,16 @@ on:
   push:
     branches:
       - master
+      - refactor/rust_danmaku
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
 
 jobs:
   npm-launcher:
@@ -54,7 +60,55 @@ jobs:
       - name: Run tests
         run: cargo test --locked --workspace
 
-  # 内置 DanmakuFactory 核心与 C 包装层：ASan/UBSan/LSan 覆盖成功与失败清理路径，并检查导出符号都带前缀
+  # Rust 生产路径的三平台验收；以下 C oracle 作业保留至 Gate 6。
+  danmaku-native:
+    name: Native danmaku and worker (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    env:
+      BILIUP_REQUIRE_LOCALE_TEST: '1'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: Swatinem/rust-cache@v2
+      - name: Build embedded frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+      - name: Install comma decimal locale
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y locales
+          sudo locale-gen de_DE.UTF-8
+          echo "BILIUP_REQUIRE_LOCALE_TEST=1" >> "$GITHUB_ENV"
+      - name: Native core, transactions and compatibility
+        run: cargo test --locked -p danmaku-factory
+      - name: Real binary worker protocol and publication races
+        run: cargo test --locked -p biliup-cli --test danmaku_worker
+      - name: Real Python extension worker launcher
+        run: cargo test --locked -p stream-gears --test danmaku_worker
+      - name: Worker supervision, cancellation and recovery
+        run: |
+          cargo test --locked -p biliup-cli --lib server::workbench::renders::danmaku::tests
+          cargo test --locked -p biliup-cli --lib server::workbench::renders::jobs::progress_tests::recovery
+          cargo test --locked -p biliup-cli --lib server::workbench::renders::danmaku_directory
+          cargo test --locked -p biliup-cli --lib server::workbench::renders::engine::danmaku_cleanup_tests
+      - name: Native core static checks
+        run: cargo clippy --locked -p danmaku-factory --all-targets -- -D warnings
+
+  # 冻结 C 包装层的 ASan/UBSan/LSan 及符号检查（Gate 0–5 oracle）。
   danmaku-factory-sanitizers:
     name: DanmakuFactory core under sanitizers
     runs-on: ubuntu-latest
